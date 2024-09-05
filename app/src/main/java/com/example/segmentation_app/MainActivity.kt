@@ -9,10 +9,15 @@ import android.media.Image
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -49,110 +54,156 @@ import java.util.concurrent.Executor
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 import androidx.camera.core.ExperimentalGetImage
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Scaffold
+import androidx.compose.ui.graphics.Color
+import com.google.mlkit.common.MlKit
 import kotlinx.coroutines.suspendCancellableCoroutine
+import java.io.File
+import java.io.OutputStream
 import java.nio.ByteBuffer
 import kotlin.coroutines.resumeWithException
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material.icons.filled.CheckCircle
+
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+
         setContent {
 
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    CameraScreen()
+
+                    ImageSegmenterScreen()
+
+
                 }
         }
 
     }
 }
 
+@kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CameraScreen() {
+fun ImageSegmenterScreen() {
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-    val coroutineScope = rememberCoroutineScope()
 
-    var segmentedImage by remember { mutableStateOf<Bitmap?>(null) }
-    var isProcessing by remember { mutableStateOf(false) }
+    // State to hold the output bitmap after segmentation
+    val outputImage: MutableState<Bitmap?> = remember { mutableStateOf<Bitmap?>(null) }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        AndroidView(
-            factory = { ctx ->
-                PreviewView(ctx).apply {
-                    implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                }
-            },
-            modifier = Modifier.weight(1f),
-        ) { previewView ->
-            val cameraSelector = CameraSelector.Builder()
-                .requireLensFacing(CameraSelector.LENS_FACING_BACK)
-                .build()
+    // State to hold the input bitmap before segmentation
+    val inputImage: MutableState<Bitmap?> = remember { mutableStateOf(null) }
 
-            val preview = Preview.Builder().build()
-            preview.setSurfaceProvider(previewView.surfaceProvider)
-
-            val imageAnalysis = ImageAnalysis.Builder()
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .build()
-
-
-                // this
-            imageAnalysis.setAnalyzer(
-                ContextCompat.getMainExecutor(context),
-                ImageSegmentationAnalyzer { result ->
-                    segmentedImage = result
-                    isProcessing = false
-                }
-            )
-
-            coroutineScope.launch {
-                val cameraProvider = context.getCameraProvider()
-                try {
-                    cameraProvider.unbindAll()
-                    cameraProvider.bindToLifecycle(
-                        lifecycleOwner,
-                        cameraSelector,
-                        preview,
-                        imageAnalysis
-                    )
-                } catch (exc: Exception) {
-                    Log.e("CameraScreen", "Use case binding failed", exc)
-                }
+    val pickMedia = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia(),
+        onResult = { uri ->
+            if (uri != null) {
+                inputImage.value = MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
+            } else {
+                Log.d("PhotoPicker", "No media selected")
             }
-        }
+        })
 
-        Button(
-            onClick = { isProcessing = true },
-            modifier = Modifier.align(Alignment.CenterHorizontally).padding(16.dp)
-        ) {
-            Text("Capture and Remove Background")
+    var loading: Boolean by remember { mutableStateOf(false) }
+    var isOriginal: Boolean by remember { mutableStateOf(false) }
+
+    LaunchedEffect(key1 = inputImage.value) {
+        inputImage.value?.let { bitmap ->
+            loading = true
+            val output = ImageSegmentationHelper.getResult(bitmap)
+            outputImage.value = output
+            loading = false
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        if (isProcessing) {
-            CircularProgressIndicator()
-        } else {
-            segmentedImage?.let { bitmap ->
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "Segmented Image",
-                    modifier = Modifier.fillMaxSize()
-                )
+    Scaffold { paddingValues ->
+        Box(modifier = Modifier.background(Color.White)) {
+            Row(
+                horizontalArrangement = Arrangement.End,
+                modifier = Modifier
+                    .padding(paddingValues)
+                    .fillMaxWidth()
+            ) {
+                Button(onClick = {
+                    pickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                }) {
+                    Text(text = "Open Gallery")
+                }
+
+                Button(onClick = {
+                    outputImage.value?.let {
+                        saveImageToExternalStorage(context, it)
+                    }
+                }) {
+                    Icon(Icons.Filled.CheckCircle, contentDescription = "Save Image")
+                    Text(text = "Save Image")
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (outputImage.value != null && inputImage.value != null) {
+                    Image(
+                        bitmap = if (!isOriginal) outputImage.value!!.asImageBitmap() else inputImage.value!!.asImageBitmap(),
+                        contentDescription = "",
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                isOriginal = !isOriginal
+                            }
+                    )
+                }
+
+                if (loading) {
+                    CircularProgressIndicator()
+                }
             }
         }
     }
 }
 
 
+fun saveImageToExternalStorage(context: Context, bitmap: Bitmap) {
+    val contentValues = ContentValues().apply {
+        put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+        put(MediaStore.Images.Media.DISPLAY_NAME, "segmented_image_${System.currentTimeMillis()}.png")
+        put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/SegmentedImages")
+        put(MediaStore.Images.Media.IS_PENDING, 1)
+    }
 
-class ImageSegmentationAnalyzer(
-    private val onSegmentationResult: (Bitmap?) -> Unit
-) : ImageAnalysis.Analyzer {
+    val resolver = context.contentResolver
+
+    val uri: Uri? = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+
+    uri?.let {
+        val outputStream: OutputStream? = resolver.openOutputStream(it)
+        outputStream?.use { stream ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+            Toast.makeText(context, "Image saved successfully!", Toast.LENGTH_SHORT).show()
+        }
+        contentValues.clear()
+        contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+        resolver.update(uri, contentValues, null, null)
+    } ?: run {
+        Toast.makeText(context, "Error saving image!", Toast.LENGTH_SHORT).show()
+    }
+}
+
+object ImageSegmentationHelper {
+
     private val options = SubjectSegmenterOptions.Builder()
         .enableForegroundConfidenceMask()
         .enableForegroundBitmap()
@@ -160,32 +211,19 @@ class ImageSegmentationAnalyzer(
 
     private val segmenter = SubjectSegmentation.getClient(options)
 
-    @androidx.camera.core.ExperimentalGetImage
-    override fun analyze(image: ImageProxy) {
-        val mediaImage = image.image ?: return
+    suspend fun getResult(image: Bitmap) = suspendCoroutine {
+        // Convert the input Bitmap image to InputImage format
+        val inputImage = InputImage.fromBitmap(image, 0)
 
-        val inputImage = InputImage.fromMediaImage(mediaImage, image.imageInfo.rotationDegrees)
-
+        // Process input image using SubjectSegmenter
         segmenter.process(inputImage)
             .addOnSuccessListener { result ->
-                onSegmentationResult(result.foregroundBitmap)
+                // Resume coroutine with the fg Bitmap result on success
+                it.resume(result.foregroundBitmap)
             }
-            .addOnFailureListener { e ->
-                Log.e("ImageSegmentation", "Segmentation failed: ${e.message}")
-                onSegmentationResult(null)
-            }
-            .addOnCompleteListener {
-                image.close()
+            .addOnFailureListener {e ->
+                // exception
+                it.resumeWithException(e)
             }
     }
 }
-
-
-suspend fun Context.getCameraProvider(): ProcessCameraProvider = suspendCancellableCoroutine { continuation ->
-    ProcessCameraProvider.getInstance(this).also { future ->
-        future.addListener({
-            continuation.resume(future.get())
-        }, ContextCompat.getMainExecutor(this))
-    }
-}
-
