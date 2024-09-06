@@ -56,6 +56,7 @@ import kotlin.coroutines.suspendCoroutine
 import androidx.camera.core.ExperimentalGetImage
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
@@ -70,6 +71,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material3.ButtonDefaults
 
 
 class MainActivity : ComponentActivity() {
@@ -78,14 +80,12 @@ class MainActivity : ComponentActivity() {
 
 
         setContent {
-
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
 
-                    ImageSegmenterScreen()
-
+                    MainScreen()
 
                 }
         }
@@ -95,7 +95,7 @@ class MainActivity : ComponentActivity() {
 
 @kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ImageSegmenterScreen() {
+fun MainScreen() {
     val context = LocalContext.current
 
     // State to hold the output bitmap after segmentation
@@ -129,12 +129,12 @@ fun ImageSegmenterScreen() {
     Scaffold { paddingValues ->
         Box(modifier = Modifier.background(Color.White)) {
             Row(
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.Center,
                 modifier = Modifier
                     .padding(paddingValues)
                     .fillMaxWidth()
             ) {
-                Button(onClick = {
+                Button(        onClick = {
                     pickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                 }) {
                     Text(text = "Open Gallery")
