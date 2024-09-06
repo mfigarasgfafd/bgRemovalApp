@@ -56,11 +56,12 @@ import kotlin.coroutines.suspendCoroutine
 import androidx.camera.core.ExperimentalGetImage
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
-import androidx.compose.ui.graphics.Color
 import com.google.mlkit.common.MlKit
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
@@ -72,6 +73,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.ButtonDefaults
+import android.graphics.Color
 
 
 class MainActivity : ComponentActivity() {
@@ -98,11 +100,12 @@ class MainActivity : ComponentActivity() {
 fun MainScreen() {
     val context = LocalContext.current
 
-    // State to hold the output bitmap after segmentation
+    // State to hold the input and output images
     val outputImage: MutableState<Bitmap?> = remember { mutableStateOf<Bitmap?>(null) }
-
-    // State to hold the input bitmap before segmentation
     val inputImage: MutableState<Bitmap?> = remember { mutableStateOf(null) }
+
+    // State to hold the filtered images, including the background-removed image
+    val filters: MutableState<List<Bitmap>> = remember { mutableStateOf(listOf()) }
 
     val pickMedia = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
@@ -117,24 +120,30 @@ fun MainScreen() {
     var loading: Boolean by remember { mutableStateOf(false) }
     var isOriginal: Boolean by remember { mutableStateOf(false) }
 
-    LaunchedEffect(key1 = inputImage.value) {
+    // Apply segmentation and generate filters when input image changes
+    LaunchedEffect(inputImage.value) {
         inputImage.value?.let { bitmap ->
             loading = true
             val output = ImageSegmentationHelper.getResult(bitmap)
             outputImage.value = output
+            filters.value = generateFilteredImages(bitmap, output)
             loading = false
         }
     }
 
     Scaffold { paddingValues ->
-        Box(modifier = Modifier.background(Color.White)) {
+        Column(
+            modifier = Modifier
+//                .background(Color.White)
+                .fillMaxSize()
+        ) {
             Row(
                 horizontalArrangement = Arrangement.Center,
                 modifier = Modifier
                     .padding(paddingValues)
                     .fillMaxWidth()
             ) {
-                Button(        onClick = {
+                Button(onClick = {
                     pickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                 }) {
                     Text(text = "Open Gallery")
@@ -149,9 +158,10 @@ fun MainScreen() {
                     Text(text = "Save Image")
                 }
             }
+
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .weight(1f)
                     .padding(paddingValues),
                 contentAlignment = Alignment.Center,
             ) {
@@ -171,10 +181,107 @@ fun MainScreen() {
                     CircularProgressIndicator()
                 }
             }
+
+            // Horizontal preview gallery at the bottom
+            LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(filters.value) { filter ->
+                    Image(
+                        bitmap = filter.asImageBitmap(),
+                        contentDescription = "Filtered preview",
+                        modifier = Modifier
+                            .size(100.dp)
+                            .clickable {
+                                outputImage.value = filter // Change the main image to the clicked filter
+                            }
+                    )
+                }
+            }
         }
     }
 }
 
+// Generate some basic filtered images
+// Generate some basic filtered images, including background removal
+fun generateFilteredImages(original: Bitmap, segmented: Bitmap?): List<Bitmap> {
+    val grayscaleBitmap = applyGrayscaleFilter(original)
+    val sepiaBitmap = applySepiaFilter(original)
+    val backgroundRemovedBitmap = removeBackground(original, segmented)
+
+    // Return a list of filtered bitmaps including the background removed image
+    return listOf(grayscaleBitmap, sepiaBitmap, backgroundRemovedBitmap, original)
+}
+
+// Example filter: Grayscale
+fun applyGrayscaleFilter(original: Bitmap): Bitmap {
+    val width = original.width
+    val height = original.height
+    val grayscaleBitmap = Bitmap.createBitmap(width, height, original.config)
+
+    for (i in 0 until width) {
+        for (j in 0 until height) {
+            val pixel = original.getPixel(i, j)
+            val red = Color.red(pixel)
+            val green = Color.green(pixel)
+            val blue = Color.blue(pixel)
+            val gray = (red + green + blue) / 3
+            val newPixel = Color.rgb(gray, gray, gray)
+            grayscaleBitmap.setPixel(i, j, newPixel)
+        }
+    }
+    return grayscaleBitmap
+}
+
+// Example filter: Sepia
+fun applySepiaFilter(original: Bitmap): Bitmap {
+    val width = original.width
+    val height = original.height
+    val sepiaBitmap = Bitmap.createBitmap(width, height, original.config)
+
+    for (i in 0 until width) {
+        for (j in 0 until height) {
+            val pixel = original.getPixel(i, j)
+            val red = Color.red(pixel)
+            val green = Color.green(pixel)
+            val blue = Color.blue(pixel)
+
+            val tr = (0.393 * red + 0.769 * green + 0.189 * blue).toInt().coerceIn(0, 255)
+            val tg = (0.349 * red + 0.686 * green + 0.168 * blue).toInt().coerceIn(0, 255)
+            val tb = (0.272 * red + 0.534 * green + 0.131 * blue).toInt().coerceIn(0, 255)
+
+            val newPixel = Color.rgb(tr, tg, tb)
+            sepiaBitmap.setPixel(i, j, newPixel)
+        }
+    }
+    return sepiaBitmap
+}
+
+// New filter: Remove background using the segmented image
+fun removeBackground(original: Bitmap, segmented: Bitmap?): Bitmap {
+    if (segmented == null) return original // If no segmented image is available, return the original
+
+    val width = original.width
+    val height = original.height
+    val backgroundRemovedBitmap = Bitmap.createBitmap(width, height, original.config)
+
+    for (i in 0 until width) {
+        for (j in 0 until height) {
+            val pixel = segmented.getPixel(i, j)
+            // Check if pixel is part of the foreground (not transparent)
+            if (Color.alpha(pixel) > 128) {
+                backgroundRemovedBitmap.setPixel(i, j, original.getPixel(i, j))
+            } else {
+                // Set transparent background
+                backgroundRemovedBitmap.setPixel(i, j, Color.TRANSPARENT)
+            }
+        }
+    }
+    return backgroundRemovedBitmap
+}
 
 fun saveImageToExternalStorage(context: Context, bitmap: Bitmap) {
     val contentValues = ContentValues().apply {
